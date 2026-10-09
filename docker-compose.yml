@@ -1,0 +1,38 @@
+# Runs src/main.py locally inside the exact image Azure ML builds from ./environment.
+# MLflow logs to a local SQLite store under ./outputs (no Azure connection needed).
+x-train: &train
+  build: ./environment
+  image: credit-default-train:local
+  working_dir: /app/outputs
+  # Run as the host user so files in ./outputs stay editable (export UID/GID if yours aren't 1000).
+  user: "${UID:-1000}:${GID:-1000}"
+  volumes:
+    - ./src:/app/src:ro
+    - ./outputs:/app/outputs
+
+x-args: &args >-
+  --data https://azuremlexamples.blob.core.windows.net/datasets/credit_card/default%20of%20credit%20card%20clients.csv
+  --test_train_ratio 0.2
+  --learning_rate 0.25
+  --registered_model_name credit_defaults_model
+
+services:
+  train:
+    <<: *train
+    command: ["sh", "-c", "python /app/src/main.py $$ARGS"]
+    environment:
+      HOME: /tmp
+      MLFLOW_TRACKING_URI: sqlite:////app/outputs/mlruns.db
+      ARGS: *args
+
+  # `docker compose --profile debug up debug`, then attach with the
+  # "Attach to docker compose (debug)" config in .vscode/launch.json.
+  debug:
+    <<: *train
+    profiles: ["debug"]
+    ports: ["5678:5678"]
+    command: ["sh", "-c", "pip install -q --target /tmp/debugpy debugpy && PYTHONPATH=/tmp/debugpy python -Xfrozen_modules=off -m debugpy --listen 0.0.0.0:5678 --wait-for-client /app/src/main.py $$ARGS"]
+    environment:
+      HOME: /tmp
+      MLFLOW_TRACKING_URI: sqlite:////app/outputs/mlruns.db
+      ARGS: *args

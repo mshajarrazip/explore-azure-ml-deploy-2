@@ -1,0 +1,33 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug main.py (local)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/main.py",
+      "cwd": "${workspaceFolder}/outputs",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "env": {
+        "MLFLOW_TRACKING_URI": "sqlite:///${workspaceFolder}/outputs/mlruns.db"
+      },
+      "args": [
+        "--data", "https://azuremlexamples.blob.core.windows.net/datasets/credit_card/default%20of%20credit%20card%20clients.csv",
+        "--test_train_ratio", "0.2",
+        "--learning_rate", "0.25",
+        "--registered_model_name", "credit_defaults_model"
+      ]
+    },
+    {
+      "name": "Attach to docker compose (debug)",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": { "host": "localhost", "port": 5678 },
+      "pathMappings": [
+        { "localRoot": "${workspaceFolder}/src", "remoteRoot": "/app/src" }
+      ],
+      "justMyCode": true
+    }
+  ]
+}
