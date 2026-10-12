@@ -1,0 +1,14 @@
+{
+  "identities": [
+    {
+      "name": "mlflow",
+      "credentials": [
+        {
+          "accessKey": "mlflow",
+          "secretKey": "mlflow-secret"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

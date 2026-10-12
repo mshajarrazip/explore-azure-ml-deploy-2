@@ -12,3 +12,4 @@ dependencies:
       - scikit-learn==1.6.1
       - pandas==2.2.3
       - sqlalchemy<2.1  # mlflow 2.x SQL store (local runs) breaks on SQLAlchemy 2.1
+      - starlette<1  # mlflow 2.x scoring server (`mlflow models serve`) uses app.route, removed in Starlette 1.0

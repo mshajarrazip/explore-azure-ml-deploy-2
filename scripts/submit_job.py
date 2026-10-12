@@ -1,6 +1,7 @@
 """Submit src/main.py as an Azure ML command job using the custom environment in ./environment."""
 import argparse
 import os
+import time
 
 from azure.ai.ml import Input, command
 from azure.ai.ml.entities import BuildContext, Environment
@@ -8,12 +9,13 @@ from azure.ai.ml.entities import BuildContext, Environment
 from _client import ROOT, get_ml_client
 
 REGISTERED_MODEL_NAME = "credit_defaults_model"
+TERMINAL_STATUSES = {"Completed", "Failed", "Canceled", "NotResponding"}
 DATA_URL = "https://azuremlexamples.blob.core.windows.net/datasets/credit_card/default%20of%20credit%20card%20clients.csv"
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--wait", action="store_true", help="stream logs until the job finishes")
+    parser.add_argument("--wait", action="store_true", help="poll the job status until it finishes")
     args = parser.parse_args()
 
     ml_client = get_ml_client()
@@ -47,7 +49,20 @@ def main():
     print(f"Studio URL:    {returned_job.studio_url}")
 
     if args.wait:
-        ml_client.jobs.stream(returned_job.name)
+        # Polls instead of ml_client.jobs.stream(): in azure-ai-ml 1.35.1, stream() passes the datastore's
+        # SAS token to generate_blob_sas() as an account key and fails with "binascii.Error: Incorrect padding".
+        # The logs are in the Studio URL above.
+        status = None
+        while status not in TERMINAL_STATUSES:
+            time.sleep(15)
+            # JobStatus is a str enum; .value gives the plain name ("Running") for printing
+            new_status = ml_client.jobs.get(returned_job.name).status
+            new_status = getattr(new_status, "value", new_status)
+            if new_status != status:
+                status = new_status
+                print(f"[{time.strftime('%H:%M:%S')}] {status}", flush=True)
+        if status != "Completed":
+            raise SystemExit(f"Job {returned_job.name} ended with status {status}; see the logs in Studio.")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,16 @@
-# Runs src/main.py locally inside the exact image Azure ML builds from ./environment.
-# MLflow logs to a local SQLite store under ./outputs (no Azure connection needed).
+# Local stand-in for the Azure ML workspace:
+# - MLflow tracking server + model registry (Postgres for runs/registry, SeaweedFS (S3-compatible) for artifacts).
+# - `train` / `debug` run src/main.py inside the exact image Azure ML builds from ./environment and log to it.
+# - `serve` serves the registered model over REST, like the no-code MLflow online deployment.
+# All credentials here are local-only defaults.
+x-s3-env: &s3-env
+  MLFLOW_S3_ENDPOINT_URL: http://seaweedfs:8333
+  MLFLOW_BUCKET: mlflow
+  # Must match docker/seaweedfs/s3.json
+  AWS_ACCESS_KEY_ID: mlflow
+  AWS_SECRET_ACCESS_KEY: mlflow-secret
+  AWS_DEFAULT_REGION: us-east-1
+
 x-train: &train
   build: ./environment
   image: credit-default-train:local
@@ -9,6 +20,9 @@ x-train: &train
   volumes:
     - ./src:/app/src:ro
     - ./outputs:/app/outputs
+  depends_on:
+    mlflow:
+      condition: service_healthy
 
 x-args: &args >-
   --data https://azuremlexamples.blob.core.windows.net/datasets/credit_card/default%20of%20credit%20card%20clients.csv
@@ -17,12 +31,81 @@ x-args: &args >-
   --registered_model_name credit_defaults_model
 
 services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: mlflow
+      POSTGRES_DB: mlflow
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlflow -d mlflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    command: >
+      server
+      -dir=/data
+      -s3
+      -s3.config=/etc/seaweedfs/s3.json
+      -master.volumeSizeLimitMB=1024
+      -volume.max=0
+    volumes:
+      - seaweedfs-data:/data
+      - ./docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    restart: unless-stopped
+
+  # One-off job that creates the artifact bucket, then exits.
+  create-bucket:
+    build: ./docker/mlflow
+    image: credit-default-mlflow:local
+    depends_on:
+      - seaweedfs
+    environment: *s3-env
+    command: python /usr/local/bin/create_bucket.py
+
+  mlflow:
+    build: ./docker/mlflow
+    image: credit-default-mlflow:local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      create-bucket:
+        condition: service_completed_successfully
+    environment: *s3-env
+    # Artifacts are proxied through the server, so clients only need MLFLOW_TRACKING_URI.
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri postgresql://mlflow:mlflow@postgres:5432/mlflow
+      --artifacts-destination s3://mlflow
+    # Host port is overridable (e.g. MLFLOW_PORT=5005) if 5000 is taken; containers always use mlflow:5000.
+    ports:
+      - "127.0.0.1:${MLFLOW_PORT:-5000}:5000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # In the `train` profile so `docker compose up` only starts the MLflow stack; run it with
+  #   docker compose run --rm train
   train:
     <<: *train
+    profiles: ["train"]
     command: ["sh", "-c", "python /app/src/main.py $$ARGS"]
     environment:
       HOME: /tmp
-      MLFLOW_TRACKING_URI: sqlite:////app/outputs/mlruns.db
+      USER: ${USER:-local}  # no passwd entry for the host UID; MLflow reads this for the run user
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_EXPERIMENT_NAME: train_model_credit_default_prediction
       ARGS: *args
 
   # `docker compose --profile debug up debug`, then attach with the
@@ -34,5 +117,30 @@ services:
     command: ["sh", "-c", "pip install -q --target /tmp/debugpy debugpy && PYTHONPATH=/tmp/debugpy python -Xfrozen_modules=off -m debugpy --listen 0.0.0.0:5678 --wait-for-client /app/src/main.py $$ARGS"]
     environment:
       HOME: /tmp
-      MLFLOW_TRACKING_URI: sqlite:////app/outputs/mlruns.db
+      USER: ${USER:-local}  # no passwd entry for the host UID; MLflow reads this for the run user
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_EXPERIMENT_NAME: train_model_credit_default_prediction
       ARGS: *args
+
+  # Serves the latest registered credit_defaults_model on localhost:5003 (SERVE_PORT), like deploy.py does on Azure:
+  #   docker compose --profile serve up -d serve
+  #   curl -s localhost:5003/invocations -H 'Content-Type: application/json' -d @sample-request-local.json
+  # Restart it after training to pick up a new model version.
+  serve:
+    build: ./environment
+    image: credit-default-train:local
+    profiles: ["serve"]
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    environment:
+      HOME: /tmp
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MODEL_URI: models:/credit_defaults_model/latest
+    command: ["sh", "-c", "mlflow models serve -m $$MODEL_URI --env-manager local --host 0.0.0.0 --port 5001"]
+    ports:
+      - "127.0.0.1:${SERVE_PORT:-5003}:5001"
+
+volumes:
+  postgres-data:
+  seaweedfs-data:

@@ -10,7 +10,8 @@
       "console": "integratedTerminal",
       "justMyCode": true,
       "env": {
-        "MLFLOW_TRACKING_URI": "sqlite:///${workspaceFolder}/outputs/mlruns.db"
+        "MLFLOW_TRACKING_URI": "http://localhost:5000",
+        "MLFLOW_EXPERIMENT_NAME": "train_model_credit_default_prediction"
       },
       "args": [
         "--data", "https://azuremlexamples.blob.core.windows.net/datasets/credit_card/default%20of%20credit%20card%20clients.csv",

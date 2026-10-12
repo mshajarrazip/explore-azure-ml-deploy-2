@@ -1,0 +1,13 @@
+# Client-side tools for submitting the job and deploying the endpoint (not needed inside the training env,
+# which is environment/environment.yaml).
+name: credit-default-client
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - azure-ai-ml==1.35.1
+      - azure-identity==1.26.0
+      - python-dotenv

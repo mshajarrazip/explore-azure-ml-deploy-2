@@ -1,5 +1,3 @@
-import os
-import shutil
 import argparse
 import pandas as pd
 import mlflow
@@ -85,13 +83,11 @@ def main():
         sk_model=clf,
         registered_model_name=args.registered_model_name,
         artifact_path=args.registered_model_name,
+        # Azure ML's generated MLflow scoring script imports azureml.ai.monitoring, but the inference
+        # environment is built only from these logged requirements.
+        extra_pip_requirements=["azureml-ai-monitoring==1.0.0"],
     )
 
-    # saving the model to a file (overwrite any previous local run)
-    model_dir = os.path.join(args.registered_model_name, "trained_model")
-    shutil.rmtree(model_dir, ignore_errors=True)
-    mlflow.sklearn.save_model(sk_model=clf, path=model_dir)
-    
     # stop Logging
     mlflow.end_run()
 
